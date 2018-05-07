@@ -17,6 +17,8 @@ find_package(catkin REQUIRED COMPONENTS
   depth_image_proc
   pcl_ros
   tf2
+  cv_bridge
+  eigen_conversions
 )
 
 ## System dependencies are found with CMake's conventions
