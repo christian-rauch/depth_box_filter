@@ -19,7 +19,7 @@ class BoxFilter {
 public:
     BoxFilter() : n_priv("~"), it(n), tf(tf_buffer) {
         if(!n_priv.getParam("base_frame", base_frame)) {
-            ROS_WARN_STREAM("no base_frame");
+            ROS_ERROR_STREAM("no base_frame");
             throw std::runtime_error("no base_frame");
         }
 
@@ -28,7 +28,7 @@ public:
         // read plane parameters
         XmlRpc::XmlRpcValue planes_param;
         if(!n_priv.getParam("planes", planes_param)) {
-            ROS_WARN_STREAM("no planes");
+            ROS_ERROR_STREAM("no planes");
             throw std::runtime_error("no planes");
         }
 
@@ -149,7 +149,7 @@ public:
                                                   ).transform, T_cb);
         }
         catch (const tf2::TransformException &e) {
-            ROS_WARN_STREAM(e.what());
+            ROS_DEBUG_STREAM(e.what());
             return;
         }
 
