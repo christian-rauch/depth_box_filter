@@ -1,9 +1,12 @@
 <launch>
 <node pkg="depth_box_filter" type="depth_box_filter_node" name="depth_box_filter" output="screen">
     <!-- topics -->
-    <remap from="image" to="/camera/depth/image_rect_raw"/>
     <remap from="camera_info" to="/camera/depth/camera_info"/>
-    <param name="image_transport" type="str" value="compressedDepth" />
+    <remap from="depth/image" to="/camera/depth/image_rect_raw"/>
+    <param name="depth/image_transport" type="str" value="compressedDepth" />
+    <param name="use_colour" type="bool" value="true" />
+    <remap from="rgb/image" to="/camera/rgb/image_rect_color"/>
+    <param name="rgb/image_transport" type="str" value="compressed" />
 
     <param name="base_frame" type="str" value="base" />
 

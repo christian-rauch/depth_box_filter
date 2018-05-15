@@ -23,6 +23,8 @@ public:
             throw std::runtime_error("no base_frame");
         }
 
+        const bool use_colour = n_priv.param<bool>("use_colour", false);
+
         // read plane parameters
         XmlRpc::XmlRpcValue planes_param;
         if(!n_priv.getParam("planes", planes_param)) {
@@ -32,14 +34,23 @@ public:
 
         read_plane_param(planes_param);
 
-        sub_image.subscribe(it, ros::names::remap("image"), 1);
+        sub_image_depth.subscribe(it, ros::names::remap("depth/image"), 1,
+                                  image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "depth/image_transport"));
         sub_info.subscribe(n, ros::names::remap("camera_info"), 1);
 
         pub_filtered = it.advertise("image_filtered", 1);
         pub_points = n.advertise<sensor_msgs::PointCloud2>("points_filtered", 1);
 
-        sync = std::unique_ptr<message_filters::Synchronizer<ApproxSync>>(new message_filters::Synchronizer<ApproxSync>(ApproxSync(10), sub_info, sub_image));
-        sync->registerCallback(boost::bind(&BoxFilter::cb, this, _1, _2));
+        if(use_colour) {
+            sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
+                                    image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
+            sync_rgbd = std::unique_ptr<RegisteredSync>(new RegisteredSync(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb));
+            sync_rgbd->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZRGB>, this, _1, _2, _3));
+        }
+        else {
+            sync = std::unique_ptr<DepthSync>(new DepthSync(SyncPolDepth(10), sub_info, sub_image_depth));
+            sync->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZ>, this, _1, _2, nullptr));
+        }
     }
 
     void read_plane_param(XmlRpc::XmlRpcValue &planes_param) {
@@ -74,30 +85,59 @@ public:
 
     ~BoxFilter() {
         sync.reset();
+        sync_rgbd.reset();
     }
 
-    void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr img_msg) {
+    template<typename PointT>
+    void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
+        // check colour encoding
+        if(rgb_img_msg && rgb_img_msg->encoding!=sensor_msgs::image_encodings::RGB8) {
+            ROS_ERROR_STREAM("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'. "
+                          << "Supported encodings: "+sensor_msgs::image_encodings::RGB8);
+            throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
+        }
+
         image_geometry::PinholeCameraModel camera_model;
         camera_model.fromCameraInfo(ci);
 
         sensor_msgs::PointCloud2::Ptr points_cam_msg(new sensor_msgs::PointCloud2);
-        points_cam_msg->header = img_msg->header;
-        points_cam_msg->height = img_msg->height;
-        points_cam_msg->width  = img_msg->width;
+        points_cam_msg->header = depth_img_msg->header;
+        points_cam_msg->height = depth_img_msg->height;
+        points_cam_msg->width  = depth_img_msg->width;
         points_cam_msg->is_dense = false;
         points_cam_msg->is_bigendian = false;
 
         sensor_msgs::PointCloud2Modifier pcd_modifier(*points_cam_msg);
-        pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
-
-        if (img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
-            depth_image_proc::convert<uint16_t>(img_msg, points_cam_msg, camera_model);
+        if(!rgb_img_msg) {
+            pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
         }
-        else if (img_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
-            depth_image_proc::convert<float>(img_msg, points_cam_msg, camera_model);
+        else {
+            pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
         }
 
-        const std::string camera_frame = img_msg->header.frame_id;
+        if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+            depth_image_proc::convert<uint16_t>(depth_img_msg, points_cam_msg, camera_model);
+        }
+        else if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
+            depth_image_proc::convert<float>(depth_img_msg, points_cam_msg, camera_model);
+        }
+
+        if(rgb_img_msg) {
+            const uint8_t* rgb = rgb_img_msg->data.data();
+
+            sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(*points_cam_msg, "r");
+            sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(*points_cam_msg, "g");
+            sensor_msgs::PointCloud2Iterator<uint8_t> iter_b(*points_cam_msg, "b");
+
+            for(uint i = 0; i<points_cam_msg->width*points_cam_msg->height; i++) {
+                // assuming RGB8 colour encoding (red, green, blue
+                *++iter_r = rgb_img_msg->data[i*3+0];
+                *++iter_g = rgb_img_msg->data[i*3+1];
+                *++iter_b = rgb_img_msg->data[i*3+2];
+            }
+        }
+
+        const std::string camera_frame = depth_img_msg->header.frame_id;
 
         // transformation from camera to base
         Eigen::Isometry3d T_cb;
@@ -121,11 +161,11 @@ public:
             planes_cam.push_back(pc);
         }
 
-        pcl::PointCloud<pcl::PointXYZ> cloud;
+        pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
 
         // filter points and depth values
-        cv_bridge::CvImagePtr dimg = cv_bridge::toCvCopy(img_msg);
+        cv_bridge::CvImagePtr dimg = cv_bridge::toCvCopy(depth_img_msg);
         for(int r=0; r<cloud.height; r++) {
             for(int c=0; c<cloud.width; c++) {
                 for(const Eigen::Vector4f &p : planes_cam) {
@@ -135,7 +175,7 @@ public:
                     if(d>=0) {
                         // outside
                         dimg->image.at<uint16_t>(cv::Point(c,r)) = 0;
-                        cloud.at(c,r) = pcl::PointXYZ();
+                        cloud.at(c,r) = PointT();
                     }
                 }
             }
@@ -150,16 +190,21 @@ public:
     }
 
 private:
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::CameraInfo, sensor_msgs::Image> ApproxSync;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::CameraInfo, sensor_msgs::Image> SyncPolDepth;
+    typedef message_filters::Synchronizer<SyncPolDepth> DepthSync;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::CameraInfo, sensor_msgs::Image, sensor_msgs::Image> SyncPolRGBD;
+    typedef message_filters::Synchronizer<SyncPolRGBD> RegisteredSync;
 
     ros::NodeHandle n;
     ros::NodeHandle n_priv;
     image_transport::ImageTransport it;
-    image_transport::SubscriberFilter sub_image;
+    image_transport::SubscriberFilter sub_image_depth;
+    image_transport::SubscriberFilter sub_image_rgb;
     ros::Publisher pub_points;
     image_transport::Publisher pub_filtered;
 
-    std::unique_ptr<message_filters::Synchronizer<ApproxSync>> sync;
+    std::unique_ptr<DepthSync> sync;
+    std::unique_ptr<RegisteredSync> sync_rgbd;
     message_filters::Subscriber<sensor_msgs::CameraInfo> sub_info;
 
     tf2_ros::Buffer tf_buffer;
