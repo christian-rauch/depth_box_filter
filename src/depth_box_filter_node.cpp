@@ -41,6 +41,9 @@ public:
         pub_filtered = it.advertise("image_filtered", 1);
         pub_points = n.advertise<sensor_msgs::PointCloud2>("points_filtered", 1);
 
+        points_cam_msg = boost::make_shared<sensor_msgs::PointCloud2>();
+        pcd_modifier = std::make_shared<sensor_msgs::PointCloud2Modifier>(*points_cam_msg);
+
         if(use_colour) {
             sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
                                     image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
@@ -80,6 +83,7 @@ public:
                 ROS_ERROR_STREAM("Numeric values need to be given explicitly as floating point.");
                 throw;
             }
+            planes_cam.resize(planes_base.size());
         }
     }
 
@@ -97,22 +101,19 @@ public:
             throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
         }
 
-        image_geometry::PinholeCameraModel camera_model;
         camera_model.fromCameraInfo(ci);
 
-        sensor_msgs::PointCloud2::Ptr points_cam_msg(new sensor_msgs::PointCloud2);
         points_cam_msg->header = depth_img_msg->header;
         points_cam_msg->height = depth_img_msg->height;
         points_cam_msg->width  = depth_img_msg->width;
         points_cam_msg->is_dense = false;
         points_cam_msg->is_bigendian = false;
 
-        sensor_msgs::PointCloud2Modifier pcd_modifier(*points_cam_msg);
         if(!rgb_img_msg) {
-            pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
+            pcd_modifier->setPointCloud2FieldsByString(1, "xyz");
         }
         else {
-            pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
+            pcd_modifier->setPointCloud2FieldsByString(2, "xyz", "rgb");
         }
 
         if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
@@ -123,8 +124,6 @@ public:
         }
 
         if(rgb_img_msg) {
-            const uint8_t* rgb = rgb_img_msg->data.data();
-
             sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(*points_cam_msg, "r");
             sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(*points_cam_msg, "g");
             sensor_msgs::PointCloud2Iterator<uint8_t> iter_b(*points_cam_msg, "b");
@@ -137,14 +136,12 @@ public:
             }
         }
 
-        const std::string camera_frame = depth_img_msg->header.frame_id;
-
         // transformation from camera to base
         Eigen::Isometry3d T_cb;
         try {
             tf::transformMsgToEigen(
-                        tf_buffer.lookupTransform(camera_frame, // target
-                                                  base_frame,   // source
+                        tf_buffer.lookupTransform(depth_img_msg->header.frame_id,   // target
+                                                  base_frame,                       // source
                                                   ros::Time(0)
                                                   ).transform, T_cb);
         }
@@ -154,18 +151,16 @@ public:
         }
 
         // transform planes from base to camera frame
-        std::vector<Eigen::Vector4f> planes_cam;
-        for(const Eigen::Vector4f &pb : planes_base) {
+        for(uint i = 0; i<planes_base.size(); i++) {
             // https://math.stackexchange.com/a/1377119
-            const Eigen::Vector4f pc = T_cb.cast<float>().inverse().matrix().transpose() * pb;
-            planes_cam.push_back(pc);
+            planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
 
         pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
 
         // filter points and depth values
-        cv_bridge::CvImagePtr dimg = cv_bridge::toCvCopy(depth_img_msg);
+        dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
         for(int r=0; r<cloud.height; r++) {
             for(int c=0; c<cloud.width; c++) {
                 for(const Eigen::Vector4f &p : planes_cam) {
@@ -174,19 +169,16 @@ public:
                     const auto d = (p.head<3>().dot(cloud.at(c,r).getVector3fMap()) + p[3]) / p.head<3>().norm();
                     if(d>=0) {
                         // outside
-                        dimg->image.at<uint16_t>(cv::Point(c,r)) = 0;
+                        dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
                         cloud.at(c,r) = PointT();
                     }
                 }
             }
         }
+        pub_filtered.publish(dimg_filtered->toImageMsg());
 
-        pub_filtered.publish(dimg->toImageMsg());
-
-        sensor_msgs::PointCloud2 out;
-        pcl::toROSMsg(cloud, out);
-
-        pub_points.publish(out);
+        pcl::toROSMsg(cloud, pc_filtered);
+        pub_points.publish(pc_filtered);
     }
 
 private:
@@ -214,6 +206,13 @@ private:
 
     // plane parameters (a, b, c, d)
     std::vector<Eigen::Vector4f> planes_base;
+    std::vector<Eigen::Vector4f> planes_cam;
+
+    image_geometry::PinholeCameraModel camera_model;
+    sensor_msgs::PointCloud2::Ptr points_cam_msg;
+    std::shared_ptr<sensor_msgs::PointCloud2Modifier> pcd_modifier;
+    cv_bridge::CvImagePtr dimg_filtered;
+    sensor_msgs::PointCloud2 pc_filtered;
 };
 
 int main(int argc, char **argv) {
