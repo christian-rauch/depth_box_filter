@@ -130,10 +130,10 @@ public:
             sensor_msgs::PointCloud2Iterator<uint8_t> iter_b(*points_cam_msg, "b");
 
             for(uint i = 0; i<points_cam_msg->width*points_cam_msg->height; i++) {
-                // assuming RGB8 colour encoding (red, green, blue
-                *++iter_r = rgb_img_msg->data[i*3+0];
-                *++iter_g = rgb_img_msg->data[i*3+1];
-                *++iter_b = rgb_img_msg->data[i*3+2];
+                // assuming RGB8 colour encoding (red, green, blue)
+                *iter_r = rgb_img_msg->data[i*3+0]; ++iter_r;
+                *iter_g = rgb_img_msg->data[i*3+1]; ++iter_g;
+                *iter_b = rgb_img_msg->data[i*3+2]; ++iter_b;
             }
         }
 
