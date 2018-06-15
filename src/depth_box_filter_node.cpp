@@ -42,7 +42,6 @@ public:
         pub_points = n.advertise<sensor_msgs::PointCloud2>("points_filtered", 1);
 
         points_cam_msg = boost::make_shared<sensor_msgs::PointCloud2>();
-        pcd_modifier = std::make_shared<sensor_msgs::PointCloud2Modifier>(*points_cam_msg);
 
         if(use_colour) {
             sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
@@ -109,11 +108,12 @@ public:
         points_cam_msg->is_dense = false;
         points_cam_msg->is_bigendian = false;
 
+        sensor_msgs::PointCloud2Modifier pcd_modifier(*points_cam_msg);
         if(!rgb_img_msg) {
-            pcd_modifier->setPointCloud2FieldsByString(1, "xyz");
+            pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
         }
         else {
-            pcd_modifier->setPointCloud2FieldsByString(2, "xyz", "rgb");
+            pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
         }
 
         if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
@@ -179,6 +179,8 @@ public:
 
         pcl::toROSMsg(cloud, pc_filtered);
         pub_points.publish(pc_filtered);
+
+        pcd_modifier.clear();
     }
 
 private:
