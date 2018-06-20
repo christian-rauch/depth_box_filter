@@ -93,13 +93,6 @@ public:
 
     template<typename PointT>
     void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
-        // check colour encoding
-        if(rgb_img_msg && rgb_img_msg->encoding!=sensor_msgs::image_encodings::RGB8) {
-            ROS_ERROR_STREAM("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'. "
-                          << "Supported encodings: "+sensor_msgs::image_encodings::RGB8);
-            throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
-        }
-
         camera_model.fromCameraInfo(ci);
 
         points_cam_msg->header = depth_img_msg->header;
@@ -113,7 +106,16 @@ public:
             pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
         }
         else {
-            pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
+            if(rgb_img_msg->encoding==sensor_msgs::image_encodings::RGB8) {
+                pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
+            }
+            else if(rgb_img_msg->encoding==sensor_msgs::image_encodings::BGR8) {
+                pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "bgr");
+            }
+            else {
+                ROS_ERROR_STREAM("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'. ");
+                throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
+            }
         }
 
         if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
