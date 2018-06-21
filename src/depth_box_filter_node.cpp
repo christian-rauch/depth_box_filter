@@ -22,6 +22,9 @@ public:
             ROS_ERROR_STREAM("no base_frame");
             throw std::runtime_error("no base_frame");
         }
+        if(n_priv.getParam("camera_frame", camera_frame)) {
+            ROS_INFO_STREAM("Will use frame '"<< camera_frame <<"' instead of camera frame");
+        }
 
         const bool use_colour = n_priv.param<bool>("use_colour", false);
 
@@ -140,10 +143,11 @@ public:
 
         // transformation from camera to base
         Eigen::Isometry3d T_cb;
+        const std::string camera_frame = this->camera_frame.empty() ? depth_img_msg->header.frame_id : this->camera_frame;
         try {
             tf::transformMsgToEigen(
-                        tf_buffer.lookupTransform(depth_img_msg->header.frame_id,   // target
-                                                  base_frame,                       // source
+                        tf_buffer.lookupTransform(camera_frame, // target
+                                                  base_frame,   // source
                                                   ros::Time(0)
                                                   ).transform, T_cb);
         }
@@ -207,6 +211,7 @@ private:
     tf2_ros::TransformListener tf;
 
     std::string base_frame;
+    std::string camera_frame;
 
     // plane parameters (a, b, c, d)
     std::vector<Eigen::Vector4f> planes_base;
