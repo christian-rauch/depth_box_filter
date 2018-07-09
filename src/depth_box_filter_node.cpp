@@ -109,16 +109,7 @@ public:
             pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
         }
         else {
-            if(rgb_img_msg->encoding==sensor_msgs::image_encodings::RGB8) {
-                pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
-            }
-            else if(rgb_img_msg->encoding==sensor_msgs::image_encodings::BGR8) {
-                pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "bgr");
-            }
-            else {
-                ROS_ERROR_STREAM("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'. ");
-                throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
-            }
+            pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
         }
 
         if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
@@ -129,15 +120,29 @@ public:
         }
 
         if(rgb_img_msg) {
-            sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(*points_cam_msg, "r");
-            sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(*points_cam_msg, "g");
-            sensor_msgs::PointCloud2Iterator<uint8_t> iter_b(*points_cam_msg, "b");
+            std::shared_ptr<sensor_msgs::PointCloud2Iterator<uint8_t>> iter_ch1;
+            std::shared_ptr<sensor_msgs::PointCloud2Iterator<uint8_t>> iter_ch2;
+            std::shared_ptr<sensor_msgs::PointCloud2Iterator<uint8_t>> iter_ch3;
+
+            if(rgb_img_msg->encoding==sensor_msgs::image_encodings::RGB8) {
+                iter_ch1 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "r");
+                iter_ch2 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "g");
+                iter_ch3 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "b");
+            }
+            else if(rgb_img_msg->encoding==sensor_msgs::image_encodings::BGR8) {
+                iter_ch1 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "b");
+                iter_ch2 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "g");
+                iter_ch3 = std::make_shared<sensor_msgs::PointCloud2Iterator<uint8_t>>(*points_cam_msg, "r");
+            }
+            else {
+                ROS_ERROR_STREAM("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'. ");
+                throw std::runtime_error("Unsupported colour encoding: '"+rgb_img_msg->encoding+"'.");
+            }
 
             for(uint i = 0; i<points_cam_msg->width*points_cam_msg->height; i++) {
-                // assuming RGB8 colour encoding (red, green, blue)
-                *iter_r = rgb_img_msg->data[i*3+0]; ++iter_r;
-                *iter_g = rgb_img_msg->data[i*3+1]; ++iter_g;
-                *iter_b = rgb_img_msg->data[i*3+2]; ++iter_b;
+                *(*iter_ch1) = rgb_img_msg->data[i*3+0]; ++(*iter_ch1);
+                *(*iter_ch2) = rgb_img_msg->data[i*3+1]; ++(*iter_ch2);
+                *(*iter_ch3) = rgb_img_msg->data[i*3+2]; ++(*iter_ch3);
             }
         }
 
