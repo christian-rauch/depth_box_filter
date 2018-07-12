@@ -161,6 +161,7 @@ public:
         }
         catch (const tf2::TransformException &e) {
             ROS_DEBUG_STREAM(e.what());
+            std::cout << e.what() << std::endl;
             return;
         }
 
@@ -169,6 +170,12 @@ public:
             // https://math.stackexchange.com/a/1377119
             planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
+
+//        std::cout << "T_cb:" << std::endl << T_cb.matrix() << std::endl;
+//        std::cout << "plane base:" << std::endl;
+//        for(const auto &p : planes_base) { std::cout << p.transpose() << std::endl; }
+//        std::cout << "plane cam:" << std::endl;
+//        for(const auto &p : planes_cam) { std::cout << p.transpose() << std::endl; }
 
         pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
