@@ -13,7 +13,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <eigen_conversions/eigen_msg.h>
 #include <XmlRpcException.h>
-
+#include <visualization_msgs/MarkerArray.h>
 
 class BoxFilter {
 public:
@@ -43,6 +43,7 @@ public:
 
         pub_filtered = it.advertise("image_filtered", 1);
         pub_points = n.advertise<sensor_msgs::PointCloud2>("points_filtered", 1);
+        pub_marker_planes = n.advertise<visualization_msgs::MarkerArray>("marker/planes", 1);
 
         points_cam_msg = boost::make_shared<sensor_msgs::PointCloud2>();
 
@@ -177,6 +178,45 @@ public:
 //        std::cout << "plane cam:" << std::endl;
 //        for(const auto &p : planes_cam) { std::cout << p.transpose() << std::endl; }
 
+        visualization_msgs::MarkerArray ma;
+        for(uint i=0; i<planes_cam.size(); i++) {
+            visualization_msgs::Marker m;
+            m.header.stamp = ros::Time::now();
+            m.header.frame_id = camera_frame;
+            m.frame_locked = true;
+            m.ns = "plane/"+std::to_string(i);
+            m.type = visualization_msgs::Marker::ARROW;
+            // size
+            m.scale.x = 0.01;
+            m.scale.y = 0.05;
+            m.scale.z = 0.05;
+            // colour
+            m.color.r = 1;
+            m.color.g = 1;
+            m.color.b = 0;
+            m.color.a = 0.2;
+
+            // (a, b, c, d)
+            const Eigen::Vector3f direction = planes_cam[i].head<3>();
+            const Eigen::Vector3f start = direction.normalized() * planes_cam[i].tail<1>();
+            const Eigen::Vector3f end = start+direction;
+//            std::cout << "start: " << start.transpose() << std::endl;
+//            std::cout << "end: " << end.transpose() << std::endl;
+
+            geometry_msgs::Point pp;
+            pp.x = start.x();
+            pp.y = start.y();
+            pp.z = start.z();
+            m.points.push_back(pp);
+            pp.x = end.x();
+            pp.y = end.y();
+            pp.z = end.z();
+            m.points.push_back(pp);
+
+            ma.markers.push_back(m);
+        }
+        pub_marker_planes.publish(ma);
+
         pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
 
@@ -217,6 +257,7 @@ private:
     image_transport::SubscriberFilter sub_image_rgb;
     ros::Publisher pub_points;
     image_transport::Publisher pub_filtered;
+    ros::Publisher pub_marker_planes;
 
     std::unique_ptr<DepthSync> sync;
     std::unique_ptr<RegisteredSync> sync_rgbd;
