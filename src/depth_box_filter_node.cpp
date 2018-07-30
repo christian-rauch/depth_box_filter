@@ -112,11 +112,14 @@ public:
             pcd_modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
         }
 
-        if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+        if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1 || depth_img_msg->encoding == sensor_msgs::image_encodings::MONO16) {
             depth_image_proc::convert<uint16_t>(depth_img_msg, points_cam_msg, camera_model);
         }
         else if (depth_img_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
             depth_image_proc::convert<float>(depth_img_msg, points_cam_msg, camera_model);
+        }
+        else {
+            throw std::runtime_error("unknown image encoding: "+depth_img_msg->encoding);
         }
 
         if(rgb_img_msg) {
