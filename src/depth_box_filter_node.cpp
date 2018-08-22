@@ -13,6 +13,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <eigen_conversions/eigen_msg.h>
 #include <XmlRpcException.h>
+#include <chrono>
 
 
 class BoxFilter {
@@ -96,6 +97,7 @@ public:
 
     template<typename PointT>
     void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
+        const auto tstart = std::chrono::high_resolution_clock::now();
         camera_model.fromCameraInfo(ci);
 
         points_cam_msg->header = depth_img_msg->header;
@@ -103,6 +105,8 @@ public:
         points_cam_msg->width  = depth_img_msg->width;
         points_cam_msg->is_dense = false;
         points_cam_msg->is_bigendian = false;
+
+        const auto tstart_proj = std::chrono::high_resolution_clock::now();
 
         sensor_msgs::PointCloud2Modifier pcd_modifier(*points_cam_msg);
         if(!rgb_img_msg) {
@@ -149,6 +153,10 @@ public:
             }
         }
 
+        std::cout << "back projection: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_proj).count() << " s" << std::endl;
+
+        const auto tstart_transform = std::chrono::high_resolution_clock::now();
+
         // transformation from camera to base
         Eigen::Isometry3d T_cb;
         const std::string camera_frame = this->camera_frame.empty() ? depth_img_msg->header.frame_id : this->camera_frame;
@@ -170,9 +178,14 @@ public:
             planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
 
+        std::cout << "transformation: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_transform).count() << " s" << std::endl;
+
+        const auto tstart_conv = std::chrono::high_resolution_clock::now();
         pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
+        std::cout << "conversion: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_conv).count() << " s" << std::endl;
 
+        const auto tstart_filter = std::chrono::high_resolution_clock::now();
         // filter points and depth values
         dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
         for(int r=0; r<cloud.height; r++) {
@@ -189,12 +202,17 @@ public:
                 }
             }
         }
+        std::cout << "filter: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter).count() << " s" << std::endl;
+
         pub_filtered.publish(dimg_filtered->toImageMsg());
 
         pcl::toROSMsg(cloud, pc_filtered);
         pub_points.publish(pc_filtered);
 
         pcd_modifier.clear();
+
+        const float dt = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart).count();
+        std::cout << "### Elapsed time: " << dt << " s (" << 1/dt << " Hz)" << std::endl;
     }
 
 private:
