@@ -50,11 +50,11 @@ public:
             sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
                                     image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
             sync_rgbd = std::unique_ptr<RegisteredSync>(new RegisteredSync(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb));
-            sync_rgbd->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZRGB>, this, _1, _2, _3));
+            sync_rgbd->registerCallback(boost::bind(&BoxFilter::cb, this, _1, _2, _3));
         }
         else {
             sync = std::unique_ptr<DepthSync>(new DepthSync(SyncPolDepth(10), sub_info, sub_image_depth));
-            sync->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZ>, this, _1, _2, nullptr));
+            sync->registerCallback(boost::bind(&BoxFilter::cb, this, _1, _2, nullptr));
         }
     }
 
@@ -94,7 +94,6 @@ public:
         sync_rgbd.reset();
     }
 
-    template<typename PointT>
     void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
         camera_model.fromCameraInfo(ci);
 
@@ -170,29 +169,30 @@ public:
             planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
 
-        pcl::PointCloud<PointT> cloud;
-        pcl::fromROSMsg(*points_cam_msg, cloud);
+        sensor_msgs::PointCloud2Iterator<float> iter_x(*points_cam_msg, "x");
+        sensor_msgs::PointCloud2Iterator<float> iter_y(*points_cam_msg, "y");
+        sensor_msgs::PointCloud2Iterator<float> iter_z(*points_cam_msg, "z");
+        cv::MatIterator_<uint16_t> it_dimg;
 
-        // filter points and depth values
         dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
-        for(int r=0; r<cloud.height; r++) {
-            for(int c=0; c<cloud.width; c++) {
-                const PointT p = cloud.at(c,r);
-                for(const Eigen::Vector4f &plane : planes_cam) {
-                    // point-to-plane distance
-                    // http://mathworld.wolfram.com/Point-PlaneDistance.html
-                    if((plane[0]*p.x + plane[1]*p.y + plane[2]*p.z + plane[3])>0) {
-                        // outside
-                        dimg_filtered->image.at<uint16_t>(r,c) = 0;
-                        cloud.at(c,r) = PointT();
-                    }
+        for(it_dimg = dimg_filtered->image.begin<uint16_t>();
+            iter_x != iter_x.end();
+            ++iter_x, ++iter_y, ++iter_z, it_dimg++)
+        {
+            for(const Eigen::Vector4f &plane : planes_cam) {
+                // check on which side of the plane the point is (positive/negative)
+                // http://mathworld.wolfram.com/Point-PlaneDistance.html
+                if((plane[0]*(*iter_x) + plane[1]*(*iter_y) + plane[2]*(*iter_z) + plane[3])>0) {
+                    // outside, set depth and cooridinates to 0
+                    (*it_dimg) = (*iter_x) = (*iter_y) = (*iter_z) = 0;
+                    // skip check of remaining planes
+                    break;
                 }
             }
         }
-        pub_filtered.publish(dimg_filtered->toImageMsg());
 
-        pcl::toROSMsg(cloud, pc_filtered);
-        pub_points.publish(pc_filtered);
+        pub_filtered.publish(dimg_filtered->toImageMsg());
+        pub_points.publish(points_cam_msg);
 
         pcd_modifier.clear();
     }
