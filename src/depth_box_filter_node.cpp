@@ -186,22 +186,28 @@ public:
         std::cout << "conversion: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_conv).count() << " s" << std::endl;
 
         const auto tstart_filter = std::chrono::high_resolution_clock::now();
+        float filter0_total = 0;
         // filter points and depth values
         dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
         for(int r=0; r<cloud.height; r++) {
             for(int c=0; c<cloud.width; c++) {
-                for(const Eigen::Vector4f &p : planes_cam) {
+                const auto p = cloud.at(c,r);
+                const auto tstart_filter0 = std::chrono::high_resolution_clock::now();
+                for(const Eigen::Vector4f &plane : planes_cam) {
                     // point-to-plane distance
                     // http://mathworld.wolfram.com/Point-PlaneDistance.html
-                    const auto d = (p.head<3>().dot(cloud.at(c,r).getVector3fMap()) + p[3]) / p.head<3>().norm();
-                    if(d>=0) {
+                    if((plane[0]*p.x + plane[1]*p.y + plane[2]*p.z + plane[3])>0) {
                         // outside
                         dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
                         cloud.at(c,r) = PointT();
                     }
                 }
+                const float dd = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter0).count();
+                filter0_total += dd;
+//                std::cout << "filter point: " << dd << " s" << std::endl;
             }
         }
+        std::cout << "filter0 total: " << filter0_total << " s" << std::endl;
         std::cout << "filter: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter).count() << " s" << std::endl;
 
         pub_filtered.publish(dimg_filtered->toImageMsg());
