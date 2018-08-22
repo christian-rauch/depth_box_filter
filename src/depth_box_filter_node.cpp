@@ -178,42 +178,68 @@ public:
             planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
 
-        std::cout << "transformation: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_transform).count() << " s" << std::endl;
+//        std::cout << "transformation: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_transform).count() << " s" << std::endl;
 
-        const auto tstart_conv = std::chrono::high_resolution_clock::now();
-        pcl::PointCloud<PointT> cloud;
-        pcl::fromROSMsg(*points_cam_msg, cloud);
-        std::cout << "conversion: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_conv).count() << " s" << std::endl;
+//        const auto tstart_conv = std::chrono::high_resolution_clock::now();
+//        pcl::PointCloud<PointT> cloud;
+//        pcl::fromROSMsg(*points_cam_msg, cloud);
+//        std::cout << "conversion: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_conv).count() << " s" << std::endl;
+
+        sensor_msgs::PointCloud2Iterator<float> iter_x(*points_cam_msg, "x"), iter_y(*points_cam_msg, "y"), iter_z(*points_cam_msg, "z");
+        cv::MatIterator_<uint16_t> it_dimg;
 
         const auto tstart_filter = std::chrono::high_resolution_clock::now();
         float filter0_total = 0;
-        // filter points and depth values
         dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
-        for(int r=0; r<cloud.height; r++) {
-            for(int c=0; c<cloud.width; c++) {
-                const auto p = cloud.at(c,r);
-                const auto tstart_filter0 = std::chrono::high_resolution_clock::now();
-                for(const Eigen::Vector4f &plane : planes_cam) {
-                    // point-to-plane distance
-                    // http://mathworld.wolfram.com/Point-PlaneDistance.html
-                    if((plane[0]*p.x + plane[1]*p.y + plane[2]*p.z + plane[3])>0) {
-                        // outside
-                        dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
-                        cloud.at(c,r) = PointT();
-                    }
+        for(it_dimg = dimg_filtered->image.begin<uint16_t>();
+            iter_x != iter_x.end();
+            ++iter_x, ++iter_y, ++iter_z, it_dimg++)
+        {
+            const auto tstart_filter0 = std::chrono::high_resolution_clock::now();
+            for(const Eigen::Vector4f &plane : planes_cam) {
+                // point-to-plane distance
+                // http://mathworld.wolfram.com/Point-PlaneDistance.html
+                if((plane[0]*(*iter_x) + plane[1]*(*iter_y) + plane[2]*(*iter_z) + plane[3])>0) {
+                    // outside
+                    (*it_dimg) = (*iter_x) = (*iter_y) = (*iter_z) = 0;
+                    break;
                 }
-                const float dd = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter0).count();
-                filter0_total += dd;
-//                std::cout << "filter point: " << dd << " s" << std::endl;
             }
+            const float dd = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter0).count();
+            filter0_total += dd;
         }
         std::cout << "filter0 total: " << filter0_total << " s" << std::endl;
         std::cout << "filter: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter).count() << " s" << std::endl;
 
+//        const auto tstart_filter = std::chrono::high_resolution_clock::now();
+//        float filter0_total = 0;
+//        // filter points and depth values
+//        dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
+//        for(int r=0; r<cloud.height; r++) {
+//            for(int c=0; c<cloud.width; c++) {
+//                const auto p = cloud.at(c,r);
+//                const auto tstart_filter0 = std::chrono::high_resolution_clock::now();
+//                for(const Eigen::Vector4f &plane : planes_cam) {
+//                    // point-to-plane distance
+//                    // http://mathworld.wolfram.com/Point-PlaneDistance.html
+//                    if((plane[0]*p.x + plane[1]*p.y + plane[2]*p.z + plane[3])>0) {
+//                        // outside
+//                        dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
+//                        cloud.at(c,r) = PointT();
+//                    }
+//                }
+//                const float dd = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter0).count();
+//                filter0_total += dd;
+////                std::cout << "filter point: " << dd << " s" << std::endl;
+//            }
+//        }
+//        std::cout << "filter0 total: " << filter0_total << " s" << std::endl;
+//        std::cout << "filter: " << std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - tstart_filter).count() << " s" << std::endl;
+
         pub_filtered.publish(dimg_filtered->toImageMsg());
 
-        pcl::toROSMsg(cloud, pc_filtered);
-        pub_points.publish(pc_filtered);
+//        pcl::toROSMsg(cloud, pc_filtered);
+        pub_points.publish(points_cam_msg);
 
         pcd_modifier.clear();
 
