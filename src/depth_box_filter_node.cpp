@@ -26,8 +26,6 @@ public:
             ROS_INFO_STREAM("Will use frame '"<< camera_frame <<"' instead of camera frame");
         }
 
-        const bool use_colour = n_priv.param<bool>("use_colour", false);
-
         // read plane parameters
         XmlRpc::XmlRpcValue planes_param;
         if(!n_priv.getParam("planes", planes_param)) {
@@ -46,16 +44,10 @@ public:
 
         points_cam_msg = boost::make_shared<sensor_msgs::PointCloud2>();
 
-        if(use_colour) {
-            sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
-                                    image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
-            sync_rgbd = std::unique_ptr<RegisteredSync>(new RegisteredSync(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb));
-            sync_rgbd->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZRGB>, this, _1, _2, _3));
-        }
-        else {
-            sync = std::unique_ptr<DepthSync>(new DepthSync(SyncPolDepth(10), sub_info, sub_image_depth));
-            sync->registerCallback(boost::bind(&BoxFilter::cb<pcl::PointXYZ>, this, _1, _2, nullptr));
-        }
+        sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
+                                image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
+        sync_rgbd = std::unique_ptr<RegisteredSync>(new RegisteredSync(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb));
+        sync_rgbd->registerCallback(&BoxFilter::cb, this);
     }
 
     void read_plane_param(XmlRpc::XmlRpcValue &planes_param) {
@@ -90,11 +82,9 @@ public:
     }
 
     ~BoxFilter() {
-        sync.reset();
         sync_rgbd.reset();
     }
 
-    template<typename PointT>
     void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
         camera_model.fromCameraInfo(ci);
 
@@ -170,7 +160,6 @@ public:
             planes_cam[i] = T_cb.cast<float>().inverse().matrix().transpose() * planes_base[i];
         }
 
-        pcl::PointCloud<PointT> cloud;
         pcl::fromROSMsg(*points_cam_msg, cloud);
 
         // filter points and depth values
@@ -184,7 +173,7 @@ public:
                     if(d>=0) {
                         // outside
                         dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
-                        cloud.at(c,r) = PointT();
+                        cloud.at(c,r) = pcl::PointXYZRGB();
                     }
                 }
             }
@@ -198,8 +187,6 @@ public:
     }
 
 private:
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::CameraInfo, sensor_msgs::Image> SyncPolDepth;
-    typedef message_filters::Synchronizer<SyncPolDepth> DepthSync;
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::CameraInfo, sensor_msgs::Image, sensor_msgs::Image> SyncPolRGBD;
     typedef message_filters::Synchronizer<SyncPolRGBD> RegisteredSync;
 
@@ -211,7 +198,6 @@ private:
     ros::Publisher pub_points;
     image_transport::Publisher pub_filtered;
 
-    std::unique_ptr<DepthSync> sync;
     std::unique_ptr<RegisteredSync> sync_rgbd;
     message_filters::Subscriber<sensor_msgs::CameraInfo> sub_info;
 
@@ -229,6 +215,7 @@ private:
     sensor_msgs::PointCloud2::Ptr points_cam_msg;
     std::shared_ptr<sensor_msgs::PointCloud2Modifier> pcd_modifier;
     cv_bridge::CvImagePtr dimg_filtered;
+    pcl::PointCloud<pcl::PointXYZRGB> cloud;
     sensor_msgs::PointCloud2 pc_filtered;
 };
 
