@@ -177,13 +177,13 @@ public:
         dimg_filtered = cv_bridge::toCvCopy(depth_img_msg);
         for(int r=0; r<cloud.height; r++) {
             for(int c=0; c<cloud.width; c++) {
-                for(const Eigen::Vector4f &p : planes_cam) {
+                const PointT p = cloud.at(c,r);
+                for(const Eigen::Vector4f &plane : planes_cam) {
                     // point-to-plane distance
                     // http://mathworld.wolfram.com/Point-PlaneDistance.html
-                    const auto d = (p.head<3>().dot(cloud.at(c,r).getVector3fMap()) + p[3]) / p.head<3>().norm();
-                    if(d>=0) {
+                    if((plane[0]*p.x + plane[1]*p.y + plane[2]*p.z + plane[3])>0) {
                         // outside
-                        dimg_filtered->image.at<uint16_t>(cv::Point(c,r)) = 0;
+                        dimg_filtered->image.at<uint16_t>(r,c) = 0;
                         cloud.at(c,r) = PointT();
                     }
                 }
