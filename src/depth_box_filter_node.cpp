@@ -1,15 +1,12 @@
-#include <cstdlib>
 #include <ros/ros.h>
-#include <image_transport/image_transport.h>
 #include <image_transport/subscriber_filter.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/subscriber.h>
 #include <sensor_msgs/image_encodings.h>
 #include <depth_image_proc/depth_conversions.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_sensor_msgs/tf2_sensor_msgs.h>
-#include <tf2_eigen/tf2_eigen.h>
 #include <cv_bridge/cv_bridge.h>
+// TODO: remove 'pcl_conversions' header, it is required to silent warnings in Eigen
 #include <pcl_conversions/pcl_conversions.h>
 #include <eigen_conversions/eigen_msg.h>
 #include <XmlRpcException.h>
@@ -49,11 +46,11 @@ public:
         if(use_colour) {
             sub_image_rgb.subscribe(it, ros::names::remap("rgb/image"), 1,
                                     image_transport::TransportHints("raw", ros::TransportHints(), n_priv, "rgb/image_transport"));
-            sync_rgbd = std::unique_ptr<RegisteredSync>(new RegisteredSync(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb));
+            sync_rgbd = std::make_unique<RegisteredSync>(SyncPolRGBD(10), sub_info, sub_image_depth, sub_image_rgb);
             sync_rgbd->registerCallback(boost::bind(&BoxFilter::cb, this, _1, _2, _3));
         }
         else {
-            sync = std::unique_ptr<DepthSync>(new DepthSync(SyncPolDepth(10), sub_info, sub_image_depth));
+            sync = std::make_unique<DepthSync>(SyncPolDepth(10), sub_info, sub_image_depth);
             sync->registerCallback(boost::bind(&BoxFilter::cb, this, _1, _2, nullptr));
         }
     }
@@ -63,7 +60,7 @@ public:
             throw std::runtime_error("first level of 'planes' must be an array");
         }
 
-        for(int i = 0; i<planes_param.size(); i++) {
+        for(size_t i = 0; i<planes_param.size(); i++) {
             if(planes_param[i].getType()!=XmlRpc::XmlRpcValue::TypeArray) {
                 throw std::runtime_error("second level of 'planes' must be an array");
             }
@@ -78,7 +75,7 @@ public:
                 const Eigen::Vector3d p(planes_param[i][3], planes_param[i][4], planes_param[i][5]);
                 // convert from normal and point to plane equation: ax+by+cz+d=0
                 // http://mathworld.wolfram.com/Plane.html
-                planes_base.push_back(Eigen::Vector4d({n.x(), n.y(), n.z(), -n.dot(p)}).cast<float>());
+                planes_base.emplace_back(n.x(), n.y(), n.z(), -n.dot(p));
             }
             catch (XmlRpc::XmlRpcException &e) {
                 ROS_ERROR_STREAM("XmlRpc: " << e.getMessage());
@@ -94,14 +91,14 @@ public:
         sync_rgbd.reset();
     }
 
-    void cb(sensor_msgs::CameraInfoConstPtr ci, sensor_msgs::ImageConstPtr depth_img_msg, sensor_msgs::ImageConstPtr rgb_img_msg) {
+    void cb(const sensor_msgs::CameraInfo::ConstPtr &ci, const sensor_msgs::Image::ConstPtr &depth_img_msg, const sensor_msgs::Image::ConstPtr &rgb_img_msg) {
         camera_model.fromCameraInfo(ci);
 
         points_cam_msg->header = depth_img_msg->header;
         points_cam_msg->height = depth_img_msg->height;
         points_cam_msg->width  = depth_img_msg->width;
-        points_cam_msg->is_dense = false;
-        points_cam_msg->is_bigendian = false;
+        points_cam_msg->is_dense = uint8_t(false);
+        points_cam_msg->is_bigendian = uint8_t(false);
 
         sensor_msgs::PointCloud2Modifier pcd_modifier(*points_cam_msg);
         if(!rgb_img_msg) {
@@ -152,11 +149,7 @@ public:
         Eigen::Isometry3d T_cb;
         const std::string camera_frame = this->camera_frame.empty() ? depth_img_msg->header.frame_id : this->camera_frame;
         try {
-            tf::transformMsgToEigen(
-                        tf_buffer.lookupTransform(camera_frame, // target
-                                                  base_frame,   // source
-                                                  ros::Time(0)
-                                                  ).transform, T_cb);
+            tf::transformMsgToEigen(tf_buffer.lookupTransform(camera_frame, base_frame, ros::Time(0)).transform, T_cb);
         }
         catch (const tf2::TransformException &e) {
             ROS_DEBUG_STREAM(e.what());
@@ -184,7 +177,8 @@ public:
                 // http://mathworld.wolfram.com/Point-PlaneDistance.html
                 if((plane[0]*(*iter_x) + plane[1]*(*iter_y) + plane[2]*(*iter_z) + plane[3])>0) {
                     // outside, set depth and cooridinates to 0
-                    (*it_dimg) = (*iter_x) = (*iter_y) = (*iter_z) = 0;
+                    (*it_dimg) = 0;
+                    (*iter_x) = (*iter_y) = (*iter_z) = 0;
                     // skip check of remaining planes
                     break;
                 }
@@ -227,9 +221,7 @@ private:
 
     image_geometry::PinholeCameraModel camera_model;
     sensor_msgs::PointCloud2::Ptr points_cam_msg;
-    std::shared_ptr<sensor_msgs::PointCloud2Modifier> pcd_modifier;
     cv_bridge::CvImagePtr dimg_filtered;
-    sensor_msgs::PointCloud2 pc_filtered;
 };
 
 int main(int argc, char **argv) {
